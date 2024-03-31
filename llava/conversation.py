@@ -12,6 +12,8 @@ class SeparatorStyle(Enum):
 @dataclasses.dataclass
 class Conversation:
     """A class that keeps all conversation history."""
+    user_query: None
+    user_image: None
     system: str
     roles: List[str]
     messages: List[List[str]]
@@ -138,7 +140,9 @@ class Conversation:
             offset=self.offset,
             sep_style=self.sep_style,
             sep=self.sep,
-            sep2=self.sep2)
+            sep2=self.sep2,
+            user_query = None,
+            user_image = None)
 
     def dict(self):
         if len(self.get_images()) > 0:
@@ -149,6 +153,8 @@ class Conversation:
                 "offset": self.offset,
                 "sep": self.sep,
                 "sep2": self.sep2,
+                "user_query" : None,
+                "user_image" : None
             }
         return {
             "system": self.system,
@@ -157,6 +163,8 @@ class Conversation:
             "offset": self.offset,
             "sep": self.sep,
             "sep2": self.sep2,
+            "user_query" : None,
+            "user_image" : None
         }
 
 
@@ -185,6 +193,8 @@ conv_v1 = Conversation(
     offset=2,
     sep_style=SeparatorStyle.SINGLE,
     sep="###",
+    user_query = None,
+    user_image = None
 )
 
 conv_v1_2 = Conversation(
@@ -216,6 +226,8 @@ conv_v1_2 = Conversation(
     offset=2,
     sep_style=SeparatorStyle.SINGLE,
     sep="###",
+    user_query = None,
+    user_image = None
 )
 
 conv_vicuna_v1_1 = Conversation(
@@ -228,6 +240,8 @@ conv_vicuna_v1_1 = Conversation(
     sep_style=SeparatorStyle.TWO,
     sep=" ",
     sep2="</s>",
+    user_query = None,
+    user_image = None
 )
 
 conv_bair_v1 = Conversation(
@@ -238,6 +252,8 @@ conv_bair_v1 = Conversation(
     sep_style=SeparatorStyle.TWO,
     sep=" ",
     sep2="</s>",
+    user_query = None,
+    user_image = None
 )
 
 simple_conv_med = Conversation(
@@ -252,6 +268,8 @@ simple_conv_med = Conversation(
     offset=2,
     sep_style=SeparatorStyle.SINGLE,
     sep="###",
+    user_query = None,
+    user_image = None
 )
 
 simple_conv = Conversation(
@@ -265,6 +283,8 @@ simple_conv = Conversation(
     offset=2,
     sep_style=SeparatorStyle.SINGLE,
     sep="###",
+    user_query = None,
+    user_image = None
 )
 
 simple_conv_multimodal = Conversation(
@@ -279,6 +299,8 @@ simple_conv_multimodal = Conversation(
     offset=2,
     sep_style=SeparatorStyle.SINGLE,
     sep="###",
+    user_query = None,
+    user_image = None
 )
 
 simple_conv_legacy = Conversation(
@@ -293,6 +315,8 @@ simple_conv_legacy = Conversation(
     offset=2,
     sep_style=SeparatorStyle.SINGLE,
     sep="###",
+    user_query = None,
+    user_image = None
 )
 
 conv_llava_v1 = Conversation(
@@ -306,6 +330,8 @@ conv_llava_v1 = Conversation(
     sep_style=SeparatorStyle.TWO,
     sep=" ",
     sep2="</s>",
+    user_query = None,
+    user_image = None
 )
 
 default_conversation = conv_v1_2

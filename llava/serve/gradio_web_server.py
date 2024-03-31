@@ -8,12 +8,13 @@ import time
 import gradio as gr
 import requests
 
+from llava.serve.lang_chain_try import langchain_lokha
 from llava.conversation import (default_conversation, conv_templates,
                                    SeparatorStyle)
 from llava.constants import LOGDIR
 from llava.utils import (build_logger, server_error_msg,
     violates_moderation, moderation_msg)
-from llava.serve.gradio_patch import Chatbot as grChatbot
+# from llava.serve.gradio_patch import Chatbot as grChatbot
 from llava.serve.gradio_css import code_highlight_css
 import hashlib
 
@@ -22,9 +23,9 @@ logger = build_logger("gradio_web_server", "gradio_web_server.log")
 
 headers = {"User-Agent": "LLaVA Client"}
 
-no_change_btn = gr.Button.update()
-enable_btn = gr.Button.update(interactive=True)
-disable_btn = gr.Button.update(interactive=False)
+no_change_btn = gr.Button()
+enable_btn = gr.Button(interactive=True)
+disable_btn = gr.Button(interactive=False)
 
 priority = {
     "vicuna-13b": "aaaaaaa",
@@ -61,35 +62,35 @@ function() {
 def load_demo(url_params, request: gr.Request):
     logger.info(f"load_demo. ip: {request.client.host}. params: {url_params}")
 
-    dropdown_update = gr.Dropdown.update(visible=True)
+    dropdown_update = gr.Dropdown(visible=True)
     if "model" in url_params:
         model = url_params["model"]
         if model in models:
-            dropdown_update = gr.Dropdown.update(
+            dropdown_update = gr.Dropdown(
                 value=model, visible=True)
 
     state = default_conversation.copy()
     return (state,
             dropdown_update,
-            gr.Chatbot.update(visible=True),
-            gr.Textbox.update(visible=True),
-            gr.Button.update(visible=True),
-            gr.Row.update(visible=True),
-            gr.Accordion.update(visible=True))
+            gr.Chatbot(visible=True),
+            gr.Textbox(visible=True),
+            gr.Button(visible=True),
+            gr.Row(visible=True),
+            gr.Accordion(visible=True))
 
 
 def load_demo_refresh_model_list(request: gr.Request):
     logger.info(f"load_demo. ip: {request.client.host}")
     models = get_model_list()
     state = default_conversation.copy()
-    return (state, gr.Dropdown.update(
+    return (state, gr.Dropdown(
                choices=models,
                value=models[0] if len(models) > 0 else ""),
-            gr.Chatbot.update(visible=True),
-            gr.Textbox.update(visible=True),
-            gr.Button.update(visible=True),
-            gr.Row.update(visible=True),
-            gr.Accordion.update(visible=True))
+            gr.Chatbot(visible=True),
+            gr.Textbox(visible=True),
+            gr.Button(visible=True),
+            gr.Row(visible=True),
+            gr.Accordion(visible=True))
 
 
 def vote_last_response(state, vote_type, model_selector, request: gr.Request):
@@ -139,6 +140,9 @@ def clear_history(request: gr.Request):
 
 
 def add_text(state, text, image, image_process_mode, request: gr.Request):
+    state.user_query = text
+    if image is not None:
+        state.user_image = image
     logger.info(f"add_text. ip: {request.client.host}. len: {len(text)}")
     if len(text) <= 0 and image is None:
         state.skip_next = True
@@ -158,7 +162,7 @@ def add_text(state, text, image, image_process_mode, request: gr.Request):
             text = text + '\n<image>'
 
         if multimodal_msg is not None:
-            return (state, state.to_gradio_chatbot(), multimodal_msg, None) + (
+            return (state, state.to_gradio_chatbot(), multimodal_msg, None,) + (
                 no_change_btn,) * 5
         text = (text, image, image_process_mode)
     state.append_message(state.roles[0], text)
@@ -178,117 +182,158 @@ def post_process_code(code):
     return code
 
 
-def http_bot(state, model_selector, temperature, max_new_tokens, request: gr.Request):
+def http_bot(state, model_selector, temperature, max_new_tokens, image_process_mode, request: gr.Request):
     logger.info(f"http_bot. ip: {request.client.host}")
     start_tstamp = time.time()
     model_name = model_selector
-
-    if state.skip_next:
-        # This generate call is skipped due to invalid inputs
-        yield (state, state.to_gradio_chatbot()) + (no_change_btn,) * 5
-        return
-
-    if len(state.messages) == state.offset + 2:
-        # First round of conversation
-        if "llava" in model_name.lower():
-            if "v1" in model_name:
-                template_name = "llava_v1"
-            else:
-                template_name = "multimodal"
-        elif "koala" in model_name: # Hardcode the condition
-            template_name = "bair_v1"
-        elif "v1" in model_name:    # vicuna v1_1/v1_2
-            template_name = "vicuna_v1_1"
+    logger.info(f"Text is {state.user_query}")
+    logger.info(f"Image is {state.user_image}")
+    logger.info(f"Image Processing Mode is {image_process_mode}")
+    # if len(state.messages[-2][1]) > 1:
+    #     user_query = state.messages[-2][1][0].replace('<image>', '')
+    # else:
+    #     user_query =  state.messages[-2][1].replace('<image>', '')
+    # logger.info(f"Text Box is {user_query}")
+    # logger.info(f"state Messages is {state.messages[-2]}")
+    if '@med' in state.user_query:
+        # all_images = state.get_images(return_pil=True)
+        if state.user_image is  None:
+            respond = "Please provide an image for the question."
+            state.messages[-1][-1] = ''
+            respond_char = ''
+            for char in respond:
+                respond_char += char
+                state.messages[-1][-1] = respond_char + "▌"
+                yield (state, state.to_gradio_chatbot()) + (disable_btn,) * 5
+            return
         else:
-            template_name = "v1"
-        template_name = "multimodal" # FIXME: overwrite
-        new_state = conv_templates[template_name].copy()
-        new_state.append_message(new_state.roles[0], state.messages[-2][1])
-        new_state.append_message(new_state.roles[1], None)
-        state = new_state
+            output = langchain_lokha(state, state.user_query, state.user_image, image_process_mode)
+            state.messages[-1][-1] = ''
+            output_char = ''
+            for character in output:
+                output_char += character
+                state.messages[-1][-1] = output_char + "▌"
+                time.sleep(0.05)
+                yield (state, state.to_gradio_chatbot()) + (disable_btn,) * 5
 
-    # Query worker address
-    controller_url = args.controller_url
-    ret = requests.post(controller_url + "/get_worker_address",
-            json={"model": model_name})
-    worker_addr = ret.json()["address"]
-    logger.info(f"model_name: {model_name}, worker_addr: {worker_addr}")
+        state.messages[-1][-1] = state.messages[-1][-1][:-1]
+        yield (state, state.to_gradio_chatbot()) + (enable_btn,) * 5 
+    else:
+        if state.skip_next:
+            # This generate call is skipped due to invalid inputs
+            yield (state, state.to_gradio_chatbot()) + (no_change_btn,) * 5
+            return
 
-    # No available worker
-    if worker_addr == "":
-        state.messages[-1][-1] = server_error_msg
-        yield (state, state.to_gradio_chatbot(), disable_btn, disable_btn, disable_btn, enable_btn, enable_btn)
-        return
-
-    # Construct prompt
-    prompt = state.get_prompt()
-
-    all_images = state.get_images(return_pil=True)
-    all_image_hash = [hashlib.md5(image.tobytes()).hexdigest() for image in all_images]
-    for image, hash in zip(all_images, all_image_hash):
-        t = datetime.datetime.now()
-        filename = os.path.join(LOGDIR, "serve_images", f"{t.year}-{t.month:02d}-{t.day:02d}", f"{hash}.jpg")
-        if not os.path.isfile(filename):
-            os.makedirs(os.path.dirname(filename), exist_ok=True)
-            image.save(filename)
-
-    # Make requests
-    pload = {
-        "model": model_name,
-        "prompt": prompt,
-        "temperature": float(temperature),
-        "max_new_tokens": min(int(max_new_tokens), 1536),
-        "stop": state.sep if state.sep_style == SeparatorStyle.SINGLE else state.sep2,
-        "images": f'List of {len(state.get_images())} images: {all_image_hash}',
-    }
-    logger.info(f"==== request ====\n{pload}")
-
-    pload['images'] = state.get_images()
-
-    state.messages[-1][-1] = "▌"
-    yield (state, state.to_gradio_chatbot()) + (disable_btn,) * 5
-
-    try:
-        # Stream output
-        response = requests.post(worker_addr + "/worker_generate_stream",
-            headers=headers, json=pload, stream=True, timeout=10)
-        for chunk in response.iter_lines(decode_unicode=False, delimiter=b"\0"):
-            if chunk:
-                data = json.loads(chunk.decode())
-                if data["error_code"] == 0:
-                    output = data["text"][len(prompt):].strip()
-                    output = post_process_code(output)
-                    state.messages[-1][-1] = output + "▌"
-                    yield (state, state.to_gradio_chatbot()) + (disable_btn,) * 5
+        if len(state.messages) == state.offset + 2:
+            # First round of conversation
+            if "llava" in model_name.lower():
+                if "v1" in model_name:
+                    template_name = "llava_v1"
                 else:
-                    output = data["text"] + f" (error_code: {data['error_code']})"
-                    state.messages[-1][-1] = output
-                    yield (state, state.to_gradio_chatbot()) + (disable_btn, disable_btn, disable_btn, enable_btn, enable_btn)
-                    return
-                time.sleep(0.03)
-    except requests.exceptions.RequestException as e:
-        state.messages[-1][-1] = server_error_msg
-        yield (state, state.to_gradio_chatbot()) + (disable_btn, disable_btn, disable_btn, enable_btn, enable_btn)
-        return
+                    template_name = "multimodal"
+            elif "koala" in model_name: # Hardcode the condition
+                template_name = "bair_v1"
+            elif "v1" in model_name:    # vicuna v1_1/v1_2
+                template_name = "vicuna_v1_1"
+            else:
+                template_name = "v1"
+            template_name = "multimodal" # FIXME: overwrite
+            new_state = conv_templates[template_name].copy()
+            new_state.append_message(new_state.roles[0], state.messages[-2][1])
+            new_state.append_message(new_state.roles[1], None)
+            state = new_state
 
-    state.messages[-1][-1] = state.messages[-1][-1][:-1]
-    yield (state, state.to_gradio_chatbot()) + (enable_btn,) * 5
+        # Query worker address
+        controller_url = args.controller_url
+        ret = requests.post(controller_url + "/get_worker_address",
+                json={"model": model_name})
+        worker_addr = ret.json()["address"]
+        logger.info(f"model_name: {model_name}, worker_addr: {worker_addr}")
 
-    finish_tstamp = time.time()
-    logger.info(f"{output}")
+        # No available worker
+        if worker_addr == "":
+            state.messages[-1][-1] = server_error_msg
+            yield (state, state.to_gradio_chatbot(), disable_btn, disable_btn, disable_btn, enable_btn, enable_btn)
+            return
 
-    with open(get_conv_log_filename(), "a") as fout:
-        data = {
-            "tstamp": round(finish_tstamp, 4),
-            "type": "chat",
+        # Construct prompt
+        prompt = state.get_prompt()
+
+        all_images = state.get_images(return_pil=True)
+        # logger.info(f"==== Image Details ====\n{all_images}")
+        # try:
+        #     if len(all_images) == 0:
+        #       logger.info("----------------- The Image is not Present -------------")
+        # except:
+        #     print('The error occured')
+
+        all_image_hash = [hashlib.md5(image.tobytes()).hexdigest() for image in all_images]
+        for image, hash in zip(all_images, all_image_hash):
+            t = datetime.datetime.now()
+            filename = os.path.join(LOGDIR, "serve_images", f"{t.year}-{t.month:02d}-{t.day:02d}", f"{hash}.jpg")
+            if not os.path.isfile(filename):
+                os.makedirs(os.path.dirname(filename), exist_ok=True)
+                image.save(filename)
+
+        # Make requests
+        pload = {
             "model": model_name,
-            "start": round(start_tstamp, 4),
-            "finish": round(start_tstamp, 4),
-            "state": state.dict(),
-            "images": all_image_hash,
-            "ip": request.client.host,
+            "prompt": prompt,
+            "temperature": float(temperature),
+            "max_new_tokens": min(int(max_new_tokens), 1536),
+            "stop": state.sep if state.sep_style == SeparatorStyle.SINGLE else state.sep2,
+            "images": f'List of {len(state.get_images())} images: {all_image_hash}',
         }
-        fout.write(json.dumps(data) + "\n")
+        logger.info(f"==== request ====\n{pload}")
+
+        pload['images'] = state.get_images()
+
+        state.messages[-1][-1] = "▌"
+        yield (state, state.to_gradio_chatbot()) + (disable_btn,) * 5
+
+        try:
+            # Stream output
+            response = requests.post(worker_addr + "/worker_generate_stream",
+                headers=headers, json=pload, stream=True, timeout=500000)
+            for chunk in response.iter_lines(decode_unicode=False, delimiter=b"\0"):
+                if chunk:
+                    data = json.loads(chunk.decode())
+                    if data["error_code"] == 0:
+                        output = data["text"][len(prompt):].strip()
+                        output = post_process_code(output)
+                        logger.info(f"==== output ====\n{output}")
+                        state.messages[-1][-1] = output + "▌"
+                        logger.info(f'==== state.messages[-1][-1] ====\n{state.messages[-1][-1]}')
+                        yield (state, state.to_gradio_chatbot()) + (disable_btn,) * 5
+                    else:
+                        output = data["text"] + f" (error_code: {data['error_code']})"
+                        state.messages[-1][-1] = output
+                        yield (state, state.to_gradio_chatbot()) + (disable_btn, disable_btn, disable_btn, enable_btn, enable_btn)
+                        return
+                    time.sleep(0.03)
+        except requests.exceptions.RequestException as e:
+            state.messages[-1][-1] = server_error_msg
+            yield (state, state.to_gradio_chatbot()) + (disable_btn, disable_btn, disable_btn, enable_btn, enable_btn)
+            return
+
+        state.messages[-1][-1] = state.messages[-1][-1][:-1]
+        yield (state, state.to_gradio_chatbot()) + (enable_btn,) * 5
+
+        finish_tstamp = time.time()
+        logger.info(f"{output}")
+
+        with open(get_conv_log_filename(), "a") as fout:
+            data = {
+                "tstamp": round(finish_tstamp, 4),
+                "type": "chat",
+                "model": model_name,
+                "start": round(start_tstamp, 4),
+                "finish": round(start_tstamp, 4),
+                "state": state.dict(),
+                "images": all_image_hash,
+                "ip": request.client.host,
+            }
+            fout.write(json.dumps(data) + "\n")
 
 title_markdown = ("""
 # 🌋 LLaVA-Med: Large Language and Vision Assistant for Medical Research
@@ -320,10 +365,27 @@ pre {
 }
 """
 
+def dvilokha(state, textbox, imagebox, image_process_mode, request: gr.Request):
+    # user_query = state.message[-2][1][0].replace('<image>', '')
+    if '@med' in textbox:
+        # all_images = state.get_images(return_pil=True)
+        if imagebox is  None:
+            respond = "Please provide an image for the question."
+            state.messages[-1][-1] += respond + "▌"
+            return (state, state.to_gradio_chatbot()) + (disable_btn,) * 5
+        else:
+            output = langchain_lokha(textbox, imagebox, image_process_mode)
+            for character in output:
+                state.messages[-1][-1] += character+ "▌"
+                time.sleep(0.05)
+                yield (state, state.to_gradio_chatbot()) + (disable_btn,) * 5
+
+        state.messages[-1][-1] = state.messages[-1][-1][:-1]
+        yield (state, state.to_gradio_chatbot()) + (enable_btn,) * 5 
 
 def build_demo(embed_mode):
     textbox = gr.Textbox(show_label=False,
-        placeholder="Enter text and press ENTER", visible=False).style(container=False)
+        placeholder="Enter text and press ENTER", visible=True)
     with gr.Blocks(title="LLaVA-Med", theme=gr.themes.Base(), css=css) as demo:
         state = gr.State()
 
@@ -337,7 +399,7 @@ def build_demo(embed_mode):
                         choices=models,
                         value=models[0] if len(models) > 0 else "",
                         interactive=True,
-                        show_label=False).style(container=False)
+                        show_label=False)
 
                 imagebox = gr.Image(type="pil")
                 image_process_mode = gr.Radio(
@@ -356,18 +418,18 @@ def build_demo(embed_mode):
                     [f"{cur_dir}/examples/waterview.jpg", "What are the things I should be cautious about when I visit here?"],
                 ], inputs=[imagebox, textbox])
 
-                with gr.Accordion("Parameters", open=False, visible=False) as parameter_row:
+                with gr.Accordion("Parameters", open=False, visible=True) as parameter_row:
                     temperature = gr.Slider(minimum=0.0, maximum=1.0, value=0.2, step=0.1, interactive=True, label="Temperature",)
                     max_output_tokens = gr.Slider(minimum=0, maximum=1024, value=512, step=64, interactive=True, label="Max output tokens",)
 
             with gr.Column(scale=6):
-                chatbot = grChatbot(elem_id="chatbot", label="LLaVA-Med Chatbot", visible=False).style(height=550)
+                chatbot = gr.Chatbot(elem_id="chatbot", label="LLaVA-Med Chatbot", visible=True)
                 with gr.Row():
                     with gr.Column(scale=8):
                         textbox.render()
                     with gr.Column(scale=1, min_width=60):
-                        submit_btn = gr.Button(value="Submit", visible=False)
-                with gr.Row(visible=False) as button_row:
+                        submit_btn = gr.Button(value="Submit", visible=True)
+                with gr.Row(visible=True) as button_row:
                     upvote_btn = gr.Button(value="👍  Upvote", interactive=False)
                     downvote_btn = gr.Button(value="👎  Downvote", interactive=False)
                     flag_btn = gr.Button(value="⚠️  Flag", interactive=False)
@@ -378,7 +440,11 @@ def build_demo(embed_mode):
         if not embed_mode:
             gr.Markdown(tos_markdown)
             gr.Markdown(learn_more_markdown)
-        url_params = gr.JSON(visible=False)
+        url_params = gr.JSON(visible=True)
+
+        # Text and Image
+        user_text = textbox
+        user_image = imagebox
 
         # Register listeners
         btn_list = [upvote_btn, downvote_btn, flag_btn, regenerate_btn, clear_btn]
@@ -390,21 +456,22 @@ def build_demo(embed_mode):
             [state, model_selector], [textbox, upvote_btn, downvote_btn, flag_btn])
         regenerate_btn.click(regenerate, [state, image_process_mode],
             [state, chatbot, textbox, imagebox] + btn_list).then(
-            http_bot, [state, model_selector, temperature, max_output_tokens],
+            http_bot, [state, model_selector, temperature, max_output_tokens, image_process_mode],
             [state, chatbot] + btn_list)
         clear_btn.click(clear_history, None, [state, chatbot, textbox, imagebox] + btn_list)
 
         textbox.submit(add_text, [state, textbox, imagebox, image_process_mode], [state, chatbot, textbox, imagebox] + btn_list
-            ).then(http_bot, [state, model_selector, temperature, max_output_tokens],
-                   [state, chatbot] + btn_list)
+                ).then(http_bot, [state, model_selector, temperature, max_output_tokens, image_process_mode],
+                    [state, chatbot] + btn_list)
+        
         submit_btn.click(add_text, [state, textbox, imagebox, image_process_mode], [state, chatbot, textbox, imagebox] + btn_list
-            ).then(http_bot, [state, model_selector, temperature, max_output_tokens],
-                   [state, chatbot] + btn_list)
+                ).then(http_bot, [state, model_selector, temperature, max_output_tokens, image_process_mode],
+                    [state, chatbot] + btn_list)
 
         if args.model_list_mode == "once":
             demo.load(load_demo, [url_params], [state, model_selector,
                 chatbot, textbox, submit_btn, button_row, parameter_row],
-                _js=get_window_url_params)
+                js=get_window_url_params)
         elif args.model_list_mode == "reload":
             demo.load(load_demo_refresh_model_list, None, [state, model_selector,
                 chatbot, textbox, submit_btn, button_row, parameter_row])
@@ -412,6 +479,7 @@ def build_demo(embed_mode):
             raise ValueError(f"Unknown model list mode: {args.model_list_mode}")
 
     return demo
+
 
 
 if __name__ == "__main__":
@@ -432,6 +500,6 @@ if __name__ == "__main__":
 
     logger.info(args)
     demo = build_demo(args.embed)
-    demo.queue(concurrency_count=args.concurrency_count, status_update_rate=10,
+    demo.queue(default_concurrency_limit=args.concurrency_count, status_update_rate=10,
                api_open=False).launch(
         server_name=args.host, server_port=args.port, share=args.share)
